@@ -1,6 +1,16 @@
 const Card = require("../model/listing");
 const cloudinary = require("../config/cloudinary");
 
+// Simple in-memory cache for listings
+let listingsCache = null;
+let listingsCacheTime = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+const invalidateCache = () => {
+    listingsCache = null;
+    listingsCacheTime = 0;
+};
+
 // Helper function to upload file buffer to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder = "project1_venues") => {
     return new Promise((resolve, reject) => {
@@ -19,10 +29,21 @@ const uploadToCloudinary = (fileBuffer, folder = "project1_venues") => {
     });
 };
 
-// GET all listings
+// GET all listings (optimized with lean + cache)
 exports.getAllListings = async (req, res) => {
     try {
-        const cards = await Card.find();
+        const now = Date.now();
+        if (listingsCache && (now - listingsCacheTime < CACHE_TTL_MS)) {
+            return res.json(listingsCache);
+        }
+
+        const cards = await Card.find()
+            .select("tittle price img country location avgRating owner")
+            .lean();
+
+        listingsCache = cards;
+        listingsCacheTime = now;
+
         res.json(cards);
     } catch (err) {
         console.error("Get listings error:", err);
@@ -30,12 +51,12 @@ exports.getAllListings = async (req, res) => {
     }
 };
 
-// GET single listing
+// GET single listing (optimized with lean)
 exports.getListingById = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const card = await Card.findById(id).populate("owner");
+        const card = await Card.findById(id).populate("owner").lean();
         if (!card) {
             return res.status(404).json({ message: "Listing not found" });
         }
@@ -75,6 +96,8 @@ exports.createListing = async (req, res) => {
             review: [],
             owner: req.user.id
         });
+
+        invalidateCache();
 
         res.status(201).json(newCard);
     } catch (err) {
@@ -116,6 +139,8 @@ exports.updateListing = async (req, res) => {
 
         const updated = await Card.findByIdAndUpdate(id, updatedListing, { returnDocument: 'after' });
 
+        invalidateCache();
+
         res.json(updated);
     } catch (err) {
         console.error("Update listing error:", err);
@@ -138,6 +163,8 @@ exports.deleteListing = async (req, res) => {
         }
 
         await Card.findByIdAndDelete(id);
+
+        invalidateCache();
 
         res.json({ message: "Deleted successfully" });
     } catch (err) {

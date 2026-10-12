@@ -4,27 +4,48 @@ import api from "../api";
 import { useNavigate } from "react-router-dom";
 
 function Home() {
-  const [listings, setListings] = useState([]);
-const navigate = useNavigate();
-
-useEffect(() => {
-  async function fetchListings() {
+  const [listings, setListings] = useState(() => {
     try {
-      const res = await api.get("/airbnb/all-listing");
-
-      // Sort by rating - highest first
-      const topRated = res.data
-        .sort((a, b) => b.rating - a.rating)
-        .slice(0, 3);
-
-      setListings(topRated);
-    } catch (err) {
-      console.log(err);
+      const cached = sessionStorage.getItem("cached_listings");
+      if (cached) {
+        return JSON.parse(cached)
+          .sort((a, b) => (b.avgRating || b.rating || 0) - (a.avgRating || a.rating || 0))
+          .slice(0, 3);
+      }
+    } catch {
+      // ignore
     }
-  }
+    return [];
+  });
+  const navigate = useNavigate();
 
-  fetchListings();
-}, []);
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchListings() {
+      try {
+        const res = await api.get("/airbnb/all-listing");
+        if (isMounted) {
+          const topRated = res.data
+            .sort((a, b) => (b.avgRating || b.rating || 0) - (a.avgRating || a.rating || 0))
+            .slice(0, 3);
+          setListings(topRated);
+          try {
+            sessionStorage.setItem("cached_listings", JSON.stringify(res.data));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    fetchListings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   return (
     <>
       {/* Hero Section */}
